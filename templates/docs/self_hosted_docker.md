@@ -27,11 +27,17 @@ termination.
 * Create and start containers:
 
         $ cd docker
-        $ docker-compose up
+        $ docker compose up
 
 * Create a superuser:
 
-        $ docker-compose run web /opt/healthchecks/manage.py createsuperuser
+        $ docker compose run web /opt/healthchecks/manage.py createsuperuser
+
+    This will trigger an interactive prompt.
+
+    You can also provide credentials via parameters, bypassing the interactive prompt:
+
+        $ docker compose run web /opt/healthchecks/manage.py createsuperuser --email user@example.com --password changeme123
 
 * Open [http://localhost:8000](http://localhost:8000) in your browser and log in with
   the credentials from the previous step.
@@ -98,6 +104,39 @@ If you are using haproxy, you can do the same like so:
 ```text
 http-request set-header X-Forwarded-Proto https if { ssl_fc }
 http-request set-header X-Forwarded-Proto http unless { ssl_fc }
+```
+
+## Making Healthchecks Trust Your Self-signed TLS Certificate
+
+If you configure Healthchecks to deliver notifications to a server that uses
+a self-signed TLS certificate, you may see a "TLS handshake failed" error
+when sending a notification.
+
+Healthchecks uses libcurl for making outbound HTTP(S) requests. curl and libcurl
+validates certificates and refuses to continue if a certificate cannot be validated.
+It is possible to turn off certificate validation, but doing so is
+[strongly discouraged in curl docs](https://curl.se/docs/sslcerts.html).
+
+To make curl accept a self-hosted certificate, add your self-signed certificate to
+the Healthchecks container's trust store.
+
+First, mount the certificate inside the container running the healthchecks
+web application. In `docker-compose.yml`, add the following in the `web:` section:
+
+```yaml
+volumes:
+    - /path/to/cert.pem:/usr/local/share/ca-certificates/my-selfsigned-cert.crt:ro
+```
+
+Note: `/path/to/cert.pem` must be **an absolute path** in the host system pointing
+to the certificate.
+
+Then reload configuration and run `update-ca-certificates` inside the container
+as the root user:
+
+```sh
+docker compose up
+docker compose exec -u root web update-ca-certificates
 ```
 
 ## Upgrading Database

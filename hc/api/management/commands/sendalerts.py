@@ -12,9 +12,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db import close_old_connections
 from django.utils.timezone import now
-
 from hc.api.models import Check, Flip
 from hc.lib.statsd import statsd
 
@@ -22,13 +20,6 @@ logger = logging.getLogger("hc")
 
 
 def notify(flip: Flip) -> str | None:
-    # First, mark the flip as processed:
-    q = Flip.objects.filter(id=flip.id, processed=None)
-    num_updated = q.update(processed=now())
-    if num_updated != 1:
-        # Nothing got updated: another sendalerts process got there first.
-        return None
-
     # Set or clear dates for followup nags
     check = flip.owner
     check.project.update_next_nag_dates()
@@ -77,12 +68,12 @@ class Command(BaseCommand):
         )
 
     def on_notify_done(self, future: Future[str | None]) -> None:
-        close_old_connections()
         self.seats.release()
-        if logs := future.result():
-            self.stdout.write(logs)
 
-        if exc := future.exception():
+        try:
+            if logs := future.result():
+                self.stdout.write(logs)
+        except Exception as exc:
             logger.error("Exception in notify", exc_info=exc)
             raise exc
 
@@ -104,6 +95,14 @@ class Command(BaseCommand):
         if flip is None:
             self.seats.release()
             return False  # No work found, main thread should wait a bit
+
+        # Mark the flip as processed:
+        q = Flip.objects.filter(id=flip.id, processed=None)
+        num_updated = q.update(processed=now())
+        if num_updated != 1:
+            self.seats.release()
+            # Nothing got updated: another sendalerts process got there first.
+            return True
 
         f = self.executor.submit(notify, flip)
         f.add_done_callback(self.on_notify_done)
@@ -171,12 +170,14 @@ class Command(BaseCommand):
         self.shutdown = True
 
     def handle(self, num_workers: int, pool: bool, **options: Any) -> str:
+        db = settings.DATABASES["default"]
+        if "OPTIONS" in db and "application_name" in db["OPTIONS"]:
+            db["OPTIONS"]["application_name"] = "sendalerts"
+
         if pool:
-            db = settings.DATABASES["default"]
-            # psycopg_pool requires non-persistent connections:
-            db["CONN_MAX_AGE"] = 0
-            options = db.setdefault("OPTIONS", {})
-            options["pool"] = True
+            self.stdout.write(
+                "WARNING: The --pool argument is not supported any more and will be ignored.\n"
+            )
 
         self.seats = BoundedSemaphore(num_workers)
         self.executor = ThreadPoolExecutor(max_workers=num_workers)

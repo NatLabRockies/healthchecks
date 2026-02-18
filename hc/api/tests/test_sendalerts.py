@@ -4,13 +4,11 @@ from datetime import timedelta as td
 from unittest.mock import Mock, patch
 
 from django.utils.timezone import now
-
 from hc.api.management.commands.sendalerts import Command, notify
 from hc.api.models import Channel, Check, Flip
 from hc.test import BaseTestCase
 
 
-@patch("hc.api.management.commands.sendalerts.close_old_connections", Mock())
 class SendAlertsTestCase(BaseTestCase):
     def test_it_handles_grace_period(self) -> None:
         check = Check(project=self.project, status="up")
@@ -69,6 +67,10 @@ class SendAlertsTestCase(BaseTestCase):
         # It should call `notify`
         mock_notify.assert_called_once()
 
+        # It should set the processed date
+        flip.refresh_from_db()
+        self.assertTrue(flip.processed)
+
     @patch("hc.api.management.commands.sendalerts.notify")
     def test_it_updates_alert_after(self, mock_notify: Mock) -> None:
         check = Check(project=self.project, status="up")
@@ -88,22 +90,6 @@ class SendAlertsTestCase(BaseTestCase):
 
         # a flip should have not been created
         self.assertEqual(Flip.objects.count(), 0)
-
-    def test_it_marks_flip_as_processed(self) -> None:
-        check = Check(project=self.project, status="down")
-        check.last_ping = now() - td(days=2)
-        check.save()
-
-        flip = Flip(owner=check, created=check.last_ping)
-        flip.old_status = "up"
-        flip.new_status = "down"
-        flip.save()
-
-        notify(flip)
-
-        # It should set the processed date
-        flip.refresh_from_db()
-        self.assertTrue(flip.processed)
 
     def test_it_sets_next_nag_date(self) -> None:
         self.profile.nag_period = td(hours=1)

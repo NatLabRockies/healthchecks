@@ -6,7 +6,6 @@ from threading import Thread
 from uuid import UUID
 
 from django.conf import settings
-
 from hc.lib.statsd import statsd
 
 try:
@@ -112,7 +111,7 @@ def put_object(code: UUID, n: int, data: bytes) -> None:
         except S3Error as e:
             if e.code == "InternalError" and retries > 0:
                 retries -= 1
-                print("InternalError, retrying (retries=%d)..." % retries)
+                print(f"InternalError, retrying ({retries=})...")
                 continue
 
             raise e
@@ -134,9 +133,16 @@ def _remove_objects(code: UUID, upto_n: int) -> None:
                 errors = client().remove_objects(settings.S3_BUCKET, delete_objs)
                 for e in errors:
                     statsd.incr("hc.lib.s3.removeObjectsErrors")
-                    logger.error("remove_objects error: [%s] %s", e.code, e.message)
+                    logger.error(
+                        "remove_objects error for %s: [%s] %s",
+                        start_after,
+                        e.code,
+                        e.message,
+                    )
         except ReadTimeoutError:
-            logger.exception("ReadTimeoutError while removing %d objects", num_objs)
+            logger.exception(
+                f"ReadTimeoutError while removing {num_objs} objects for {code}"
+            )
             statsd.incr("hc.lib.s3.removeObjectsErrors")
 
 

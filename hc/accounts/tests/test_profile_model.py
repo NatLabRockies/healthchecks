@@ -1,29 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from datetime import timedelta as td
-from datetime import timezone
-from unittest.mock import Mock, patch
 
+import time_machine
 from django.core import mail
-from django.core.mail import EmailMessage, EmailMultiAlternatives
 from django.utils.timezone import now
 
 from hc.api.models import Check
 from hc.test import BaseTestCase
 
 CURRENT_TIME = datetime(2020, 1, 15, tzinfo=timezone.utc)
-MOCK_NOW = Mock(return_value=CURRENT_TIME)
 
 
 class ProfileModelTestCase(BaseTestCase):
-    def get_html(self, email: EmailMessage) -> str:
-        assert isinstance(email, EmailMultiAlternatives)
-        html, _ = email.alternatives[0]
-        assert isinstance(html, str)
-        return html
-
-    @patch("hc.lib.date.now", MOCK_NOW)
+    @time_machine.travel(CURRENT_TIME)
     def test_it_sends_report(self) -> None:
         check = Check(project=self.project, name="Test Check")
         check.last_ping = now()
@@ -37,13 +28,12 @@ class ProfileModelTestCase(BaseTestCase):
         message = mail.outbox[0]
 
         self.assertEqual(message.subject, "Monthly Report")
-        self.assertIn("Test Check", message.body)
+        self.assertEmailContains("Test Check")
 
-        html = self.get_html(message)
-        self.assertNotIn("Jan. 2020", html)
-        self.assertIn("Dec. 2019", html)
-        self.assertIn("Nov. 2019", html)
-        self.assertNotIn("Oct. 2019", html)
+        self.assertEmailNotContains("Jan. 2020")
+        self.assertEmailContainsHtml("Dec. 2019")
+        self.assertEmailContainsHtml("Nov. 2019")
+        self.assertEmailNotContains("Oct. 2020")
 
     def test_it_skips_report_if_no_pings(self) -> None:
         check = Check(project=self.project, name="Test Check")
@@ -81,7 +71,7 @@ class ProfileModelTestCase(BaseTestCase):
         message = mail.outbox[0]
 
         self.assertEqual(message.subject, "Reminder: 1 check still down")
-        self.assertIn("Test Check", message.body)
+        self.assertEmailContains("Test Check")
 
     def test_it_skips_nag_if_none_down(self) -> None:
         check = Check(project=self.project, name="Test Check")

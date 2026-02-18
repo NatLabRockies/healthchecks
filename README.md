@@ -13,8 +13,8 @@ team management features: projects, team members, read-only access.
 
 The building blocks are:
 
-* Python 3.10+
-* Django 5.1
+* Python 3.12+
+* Django 6.0
 * PostgreSQL, MySQL or MariaDB
 
 Healthchecks is licensed under the BSD 3-clause license.
@@ -57,6 +57,9 @@ You can use them in your READMEs, dashboards, or status pages.
 
 ## Setting Up for Development
 
+If you are planning to developing Healthchecks, please read
+[CONTRIBUTING.md](https://github.com/healthchecks/healthchecks/tree/master/CONTRIBUTING.md).
+
 To set up Healthchecks development environment:
 
 * Install dependencies (Debian/Ubuntu):
@@ -78,8 +81,8 @@ To set up Healthchecks development environment:
   (with virtualenv you get pip, we'll use it soon to install requirements):
 
   ```sh
-  python3 -m venv hc-venv
-  source hc-venv/bin/activate
+  python3 -m venv .venv
+  source .venv/bin/activate
   pip3 install wheel # make sure wheel is installed in the venv
   ```
 
@@ -92,7 +95,7 @@ To set up Healthchecks development environment:
 * Install requirements (Django, ...) into virtualenv:
 
   ```sh
-  pip install -r healthchecks/requirements.txt
+  pip install -r healthchecks/requirements.txt -r healthchecks/requirements-dev.txt
   ```
 
 * macOS only - pycurl needs to be reinstalled using the following method (assumes OpenSSL was installed using brew):
@@ -296,10 +299,6 @@ standard. To enable WebAuthn support, set the `RP_ID` (relying party identifier 
 setting to a non-null value. Set its value to your site's domain without scheme
 and without port. For example, if your site runs on `https://my-hc.example.org`,
 set `RP_ID` to `my-hc.example.org`.
-
-Note that WebAuthn requires HTTPS, even if running on localhost. To test WebAuthn
-locally with a self-signed certificate, you can use the `runsslserver` command
-from the `django-sslserver` package.
 
 ## External Authentication
 
@@ -548,7 +547,7 @@ in production.
     [ADMINS](https://docs.djangoproject.com/en/4.2/ref/settings/#admins) and
     [SERVER_EMAIL](https://docs.djangoproject.com/en/4.2/ref/settings/#server-email)
     settings. Consider setting up exception logging with [Sentry](https://sentry.io/for/django/).
-* Management commands that need to be run during each deployment.
+* Management commands that need to be run during each version upgrade.
   * `manage.py compress` – creates combined JS and CSS bundles and
      places them in the `static-collected` directory.
   * `manage.py collectstatic` – collects static files in the `static-collected`

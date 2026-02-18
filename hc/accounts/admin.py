@@ -16,7 +16,6 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.html import format_html
 from django_stubs_ext import WithAnnotations
-
 from hc.accounts.models import Credential, Profile, Project
 
 Lookups = Iterable[tuple[str, str]]
@@ -91,7 +90,6 @@ class ProfileAdmin(ModelAdmin[Profile]):
         "last_active",
         "over_limit",
         "deletion",
-        "invited",
         "sms",
         "reports",
     )
@@ -124,7 +122,6 @@ class ProfileAdmin(ModelAdmin[Profile]):
     )
 
     _limits_fields = (
-        "team_limit",
         "check_limit",
         "ping_log_limit",
         "sms_limit",
@@ -192,9 +189,6 @@ class ProfileAdmin(ModelAdmin[Profile]):
             tmpl = "<b>{} of {}</b>"
         return format_html(tmpl, obj.num_checks, obj.check_limit)
 
-    def invited(self, obj: WithAnnotations[Profile, ProfileAnnotations]) -> str:
-        return f"{obj.num_members} of {obj.team_limit}"
-
     def sms(self, obj: Profile) -> str:
         return f"{obj.sms_sent} of {obj.sms_limit}"
 
@@ -245,7 +239,7 @@ class ProjectAdmin(ModelAdmin[Project]):
     readonly_fields = ("code", "owner")
     list_select_related = ("owner",)
     list_display = ("id", "name_", "users", "usage", "switch")
-    search_fields = ["id", "name", "owner__email"]
+    search_fields = ["id", "name", "owner__email", "code"]
 
     class Media:
         css = {"all": ("css/admin/projects.css",)}
@@ -311,9 +305,6 @@ class HcUserAdmin(UserAdmin[User]):
     def last_active(
         self, user: WithAnnotations[User, UserAnnotations]
     ) -> datetime | None:
-        assert (
-            isinstance(user.last_active_date, datetime) or user.last_active_date is None
-        )
         return user.last_active_date
 
     def usage(self, user: WithAnnotations[User, UserAnnotations]) -> str:

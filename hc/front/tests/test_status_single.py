@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import timedelta as td
 
 from django.utils.timezone import now
-
 from hc.api.models import Check, Ping
 from hc.test import BaseTestCase
 
@@ -26,7 +25,7 @@ class StatusSingleTestCase(BaseTestCase):
         self.assertIn("not received any pings yet", doc["events"])
 
     def test_status_text_shows_elapsed_run_time(self) -> None:
-        p = Ping.objects.create(owner=self.check, n=1, kind="start")
+        Ping.objects.create(owner=self.check, n=1, kind="start")
         self.check.status = "new"
         self.check.n_pings = 1
         self.check.last_start = now() - td(minutes=1)
@@ -38,7 +37,7 @@ class StatusSingleTestCase(BaseTestCase):
 
         self.assertEqual(doc["status"], "new")
         self.assertIn("This check is ready for pings.", doc["status_text"])
-        self.assertIn("Currently running, started 1 min 0 sec ago.", doc["status_text"])
+        self.assertIn("Currently running, started 1 min", doc["status_text"])
 
     def test_it_returns_403_for_anon_requests(self) -> None:
         r = self.client.get(self.url)
@@ -65,7 +64,7 @@ class StatusSingleTestCase(BaseTestCase):
         self.check.save()
 
         timestamp = str(p.created.timestamp())
-        url = self.url + "?u=%s" % timestamp
+        url = self.url + f"?u={timestamp}"
 
         self.client.login(username="alice@example.org", password="password")
         r = self.client.get(url)

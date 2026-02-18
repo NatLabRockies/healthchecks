@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import time
 from datetime import timedelta as td
-from secrets import token_urlsafe
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -11,10 +10,9 @@ import pyotp
 import segno
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, update_session_auth_hash
 from django.contrib.auth import login as auth_login
 from django.contrib.auth import logout as auth_logout
-from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
@@ -135,26 +133,16 @@ def _check_2fa(request: HttpRequest, user: User) -> HttpResponse:
         # - timestamp, to limit the max time between the auth steps
         request.session["2fa_user"] = [user.id, user.email, int(time.time())]
 
-        if have_keys:
-            path = reverse("hc-login-webauthn")
-        else:
-            path = reverse("hc-login-totp")
+        query = {}
+        if _allow_redirect(request.GET.get("next")):
+            query["next"] = request.GET["next"]
 
-        redirect_url = request.GET.get("next")
-        if _allow_redirect(redirect_url):
-            path += "?next=%s" % redirect_url
-
+        route = "hc-login-webauthn" if have_keys else "hc-login-totp"
+        path = reverse(route, query=query)
         return redirect(path)
 
     auth_login(request, user)
     return _redirect_after_login(request)
-
-
-def _new_key(nbytes: int = 24) -> str:
-    while True:
-        candidate = token_urlsafe(nbytes)
-        if candidate[0] not in "-_" and candidate[-1] not in "-_":
-            return candidate
 
 
 def _set_autologin_cookie(response: HttpResponse) -> None:
@@ -231,7 +219,7 @@ def signup(request: HttpRequest) -> HttpResponse:
     if not settings.REGISTRATION_OPEN or request.user.is_authenticated:
         return HttpResponseForbidden()
 
-    ctx = {}
+    ctx: dict[str, object] = {}
     form = forms.SignupForm(request)
     if form.is_valid():
         email = form.cleaned_data["identity"]
@@ -280,7 +268,6 @@ def check_token(
 
     user = authenticate(username=username, token=token)
     if user is not None and user.is_active:
-        assert isinstance(user, User)
         if new_email:
             if User.objects.filter(email=new_email).exists():
                 request.session["bad_link"] = True
@@ -307,12 +294,14 @@ def profile(request: AuthenticatedHttpRequest) -> HttpResponse:
         "profile": profile,
         "my_projects_status": "default",
         "2fa_status": "default",
+        "tz_status": "default",
         "added_credential_name": request.session.pop("added_credential_name", ""),
         "removed_credential_name": request.session.pop("removed_credential_name", ""),
         "enabled_totp": request.session.pop("enabled_totp", False),
         "disabled_totp": request.session.pop("disabled_totp", False),
         "credentials": list(request.user.credentials.order_by("id")),
         "use_webauthn": settings.RP_ID,
+        "timezones": all_timezones,
     }
 
     if ctx["added_credential_name"] or ctx["enabled_totp"]:
@@ -336,6 +325,14 @@ def profile(request: AuthenticatedHttpRequest) -> HttpResponse:
 
         ctx["left_project"] = project
         ctx["my_projects_status"] = "info"
+
+    if request.method == "POST" and "tz" in request.POST:
+        form = forms.TzForm(request.POST)
+        if form.is_valid():
+            profile.tz = form.cleaned_data["tz"]
+            profile.save()
+            ctx["tz_status"] = "info"
+            ctx["tz_updated"] = True
 
     ctx["ownerships"] = request.user.project_set.order_by(Lower("name"))
     ctx["memberships"] = request.user.memberships.order_by(Lower("project__name"))
@@ -386,16 +383,15 @@ def project(request: AuthenticatedHttpRequest, code: UUID) -> HttpResponse:
                 return HttpResponseForbidden()
 
             if request.POST["create_key"] == "api_key":
-                project.api_key = _new_key(24)
+                ctx["new_key"] = project.set_api_key()
             elif request.POST["create_key"] == "api_key_readonly":
-                project.api_key_readonly = _new_key(24)
+                ctx["new_key"] = project.set_api_key_readonly()
             elif request.POST["create_key"] == "ping_key":
-                project.ping_key = _new_key(16)
+                ctx["new_ping_key"] = project.set_ping_key()
             project.save()
 
             ctx["key_created"] = True
             ctx["api_status"] = "success"
-            ctx["show_keys"] = True
         elif "revoke_key" in request.POST:
             if not rw:
                 return HttpResponseForbidden()
@@ -410,11 +406,6 @@ def project(request: AuthenticatedHttpRequest, code: UUID) -> HttpResponse:
 
             ctx["key_revoked"] = True
             ctx["api_status"] = "info"
-        elif "show_keys" in request.POST:
-            if not rw:
-                return HttpResponseForbidden()
-
-            ctx["show_keys"] = True
         elif "invite_team_member" in request.POST:
             if not is_manager:
                 return HttpResponseForbidden()
@@ -425,10 +416,6 @@ def project(request: AuthenticatedHttpRequest, code: UUID) -> HttpResponse:
 
                 invite_suggestions = project.invite_suggestions()
                 if not invite_suggestions.filter(email=email).exists():
-                    # We're inviting a new user. Are we within team size limit?
-                    if not project.can_invite_new_users():
-                        return HttpResponseForbidden()
-
                     # And are we not hitting a rate limit?
                     if not TokenBucket.authorize_invite(request.user):
                         return render(request, "try_later.html")
@@ -548,7 +535,6 @@ def project(request: AuthenticatedHttpRequest, code: UUID) -> HttpResponse:
 
     mq = project.member_set.select_related("user").order_by("user__email")
     ctx["memberships"] = list(mq)
-    ctx["can_invite_new_users"] = project.can_invite_new_users()
     return render(request, "accounts/project.html", ctx)
 
 
@@ -566,8 +552,6 @@ def notifications(request: AuthenticatedHttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = forms.ReportSettingsForm(request.POST)
         if form.is_valid():
-            if form.cleaned_data["tz"]:
-                profile.tz = form.cleaned_data["tz"]
             profile.reports = form.cleaned_data["reports"]
             profile.next_report_date = profile.choose_next_report_date()
 
@@ -707,7 +691,7 @@ def close(request: AuthenticatedHttpRequest) -> HttpResponse:
             user.delete()
 
             request.session.flush()
-            path = reverse("hc-login") + "?account-closed"
+            path = reverse("hc-login", query={"account-closed": 1})
             return redirect(path)
 
     ctx = {}
@@ -733,7 +717,9 @@ def add_webauthn(request: AuthenticatedHttpRequest) -> HttpResponse:
     if not settings.RP_ID:
         return HttpResponse(status=404)
 
-    credentials = request.user.credentials.values_list("data", flat=True)
+    q = request.user.credentials.values_list("data", flat=True)
+    # CreateHelper wants list[bytes] so normalize to that
+    credentials = [bytes(item) for item in q]
     helper = CreateHelper(settings.RP_ID, credentials)
 
     if request.method == "POST":
@@ -856,7 +842,9 @@ def login_webauthn(request: HttpRequest) -> HttpResponse:
     except User.DoesNotExist:
         return HttpResponseBadRequest()
 
-    credentials = user.credentials.values_list("data", flat=True)
+    q = user.credentials.values_list("data", flat=True)
+    # GetHelper wants list[bytes] so normalize to that
+    credentials = [bytes(item) for item in q]
     helper = GetHelper(settings.RP_ID, credentials)
 
     if request.method == "POST":
@@ -876,10 +864,10 @@ def login_webauthn(request: HttpRequest) -> HttpResponse:
 
     totp_url = None
     if user.profile.totp:
-        totp_url = reverse("hc-login-totp")
-        redirect_url = request.GET.get("next")
-        if _allow_redirect(redirect_url):
-            totp_url += "?next=%s" % redirect_url
+        query = {}
+        if _allow_redirect(request.GET.get("next")):
+            query["next"] = request.GET["next"]
+        totp_url = reverse("hc-login-totp", query=query)
 
     ctx = {
         "options": options,

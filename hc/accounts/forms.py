@@ -11,12 +11,13 @@ from pyotp.totp import TOTP
 
 from hc.accounts.models import REPORT_CHOICES, Member
 from hc.api.models import TokenBucket
+from hc.front.validators import TimezoneValidator
 from hc.lib.tz import all_timezones
 
 
 class LowercaseEmailField(forms.EmailField):
     def clean(self, value: str) -> str:
-        value = super(LowercaseEmailField, self).clean(value)
+        value = super().clean(value)
         return value.lower()
 
 
@@ -30,7 +31,7 @@ class SignupForm(forms.Form):
 
     def __init__(self, request: HttpRequest):
         self.request = request
-        super(SignupForm, self).__init__(request.POST)
+        super().__init__(request.POST)
 
     def clean_identity(self) -> str:
         if not TokenBucket.authorize_auth_ip(self.request):
@@ -63,7 +64,7 @@ class EmailLoginForm(forms.Form):
 
     def __init__(self, request: HttpRequest | None = None):
         self.request = request
-        super(EmailLoginForm, self).__init__(request.POST if request else None)
+        super().__init__(request.POST if request else None)
 
     def clean_identity(self) -> str:
         v = self.cleaned_data["identity"]
@@ -107,27 +108,14 @@ class PasswordLoginForm(forms.Form):
 class ReportSettingsForm(forms.Form):
     reports = forms.ChoiceField(choices=REPORT_CHOICES)
     nag_period = forms.IntegerField(min_value=0, max_value=86400)
-    tz = forms.CharField()
 
     def clean_nag_period(self) -> td:
         seconds = self.cleaned_data["nag_period"]
 
         if seconds not in (0, 3600, 86400):
-            raise forms.ValidationError("Bad nag_period: %d" % seconds)
+            raise forms.ValidationError(f"Bad nag_period: {seconds}")
 
         return td(seconds=seconds)
-
-    def clean_tz(self) -> str | None:
-        assert isinstance(self.cleaned_data["tz"], str)
-
-        # Declare tz as "clean" only if we can find it in hc.lib.tz.all_timezones
-        if self.cleaned_data["tz"] in all_timezones:
-            return self.cleaned_data["tz"]
-
-        # Otherwise, return None, and *don't* throw a validation exception:
-        # If user's browser reports a timezone we don't recognize, we
-        # should ignore the timezone but still save the rest of the form.
-        return None
 
 
 class SetPasswordForm(forms.Form):
@@ -142,7 +130,7 @@ class ChangeEmailForm(forms.Form):
         v = self.cleaned_data["email"]
         assert isinstance(v, str)
         if User.objects.filter(email=v).exists():
-            raise forms.ValidationError("%s is already registered" % v)
+            raise forms.ValidationError(f"{v} is already registered")
 
         return v
 
@@ -179,7 +167,7 @@ class TotpForm(forms.Form):
 
     def __init__(self, totp: TOTP, post: Any = None):
         self.totp = totp
-        super(TotpForm, self).__init__(post)
+        super().__init__(post)
 
     def clean_code(self) -> str:
         assert isinstance(self.cleaned_data["code"], str)
@@ -187,3 +175,7 @@ class TotpForm(forms.Form):
             raise forms.ValidationError("The code you entered was incorrect.")
 
         return self.cleaned_data["code"]
+
+
+class TzForm(forms.Form):
+    tz = forms.CharField(max_length=36, validators=[TimezoneValidator()])

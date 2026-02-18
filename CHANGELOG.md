@@ -1,7 +1,83 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-## v3.10-dev - Unreleased
+## v4.1-dev - Unreleased
+
+### Improvements
+- Remove team size limits: users on all plans can now invite many team members
+
+### Bug Fixes
+- Fix a formatting issue in Matrix notification template (#1264, @neoscaler)
+
+## v4.0 - 2026-01-22
+
+This release drops support of Python 3.11 and below. The minimum required Python
+version is 3.12.
+
+### Improvements
+- Upgrade to Django 6.0
+- Update the Matrix integration to use Matrix v3 API (#1244)
+- Update email alert template to use user's preferred time zone (#1230)
+- Update the web UI to use user's preferred timezone instead of browser's timezone
+- Add data migration to update legacy timezones to current canonical timezones (#1250)
+- Switch to using multicolor icon font for integration icons
+
+### Bug Fixes
+- Fix the text version of email report for recently created checks (#1236, @adelton)
+- Fix prepare_durations() to assert ping ordering by id not by created date
+- Fix the "Pause" API call and UI action to no-op if the check is already paused
+
+## v3.13 - 2025-11-30
+
+### Improvements
+- Add new content filtering options in the "Filtering Rules" dialog (#1130, #954)
+- Fix the email integration's unsub view to disable (not delete) the channel
+- Add support for _FILE environment variables (#1184)
+
+### Bug Fixes
+- Pin minio in Dockerfile to a known good version (#1235)
+
+## v3.12 - 2025-11-26
+
+### Improvements
+- Add rate limiting and a default ntfy.sh token support for ntfy notifications
+- Sort checks in daily/weekly/monthly reports by downtime duration, then by name (#1095)
+- Generate lower-case ping keys to work around broken email providers (#1218)
+- After creating a ping key show a dialog displaying the new ping key (#1222)
+- Add a tooltip with timestamp in the checks table, "Last Ping" column (#1040)
+- Update the Zulip transport to allow addressing users by User ID (#771)
+- Add hc_check_grace and hc_check_paused Prometheus metrics (#897, #915)
+- Update Docker base image to python:3.13.9-slim-trixie (#1233)
+
+### Bug Fixes
+- Fix cron schedule formatting in Discord notifications
+- Fix cron schedule formatting in Rocket.Chat notifications (in mobile app)
+
+## v3.11.2 - 2025-09-02
+
+### Bug Fixes
+- Update Docker image to handle legacy time zones (#1210)
+
+## v3.11.1 - 2025-08-31
+
+### Improvements
+- Update Dockerfile to use Debian Trixie as the base
+
+### Bug Fixes
+- Update Docker image to listen on IPv6 only if LISTEN_IPV6 env var is set (#1207)
+
+## v3.11 - 2025-08-28
+
+### Improvements
+- Store project API keys in the database in a hashed form (#1167)
+- Use "hcw_" and "hcr_" prefixes in project API keys (#1148)
+- New integration: Google Chat (#423)
+- Fix the ping view to handle IPv4-mapped IPv6 addresses (#1169)
+- Update Dockerfile to listen on IPv6 as well (#1177)
+- Add "ping_key+slug@..." address support when pinging by email (#1009)
+- Add daily email report option (#1202)
+
+## v3.10 - 2025-05-09
 
 ### Improvements
 - Add "badge_url" field in Check API responses (#1100)
@@ -12,6 +88,7 @@ All notable changes to this project will be documented in this file.
 - Update "?rid=<uuid>" handling to allow UUIDs with uppercase letters (#1116, @wie-niet)
 - New integration: GitHub issues (#671)
 - Add support for passing Authorization header to Prometheus metrics endpoints
+- Upgrade to Django 5.2
 
 ### Bug Fixes
 - Fix incorrect status value in Webhook integration's $JSON placeholder

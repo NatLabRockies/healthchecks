@@ -51,11 +51,23 @@ class PingDetailsTestCase(BaseTestCase):
         self.url = f"/checks/{self.check.code}/last_ping/"
 
     def test_it_works(self) -> None:
+        self.profile.tz = "Europe/Riga"
+        self.profile.save()
+
+        self.check.tz = "Europe/Berlin"
+        self.check.kind = "cron"
+        self.check.save()
+
         Ping.objects.create(owner=self.check, n=1, body_raw=b"this is body")
 
         self.client.login(username="alice@example.org", password="password")
         r = self.client.get(self.url)
         self.assertContains(r, "this is body", status_code=200)
+
+        # It should offer both the profile's tz and the check's tz
+        # in the "Time received" field
+        self.assertContains(r, "Europe/Riga")
+        self.assertContains(r, "Europe/Berlin")
 
     def test_it_displays_duration(self) -> None:
         expected_duration = td(minutes=5)
@@ -63,7 +75,7 @@ class PingDetailsTestCase(BaseTestCase):
         start_time = end_time - expected_duration
 
         Ping.objects.create(owner=self.check, created=start_time, n=1, kind="start")
-        Ping.objects.create(owner=self.check, created=end_time, n=2, kind="")
+        Ping.objects.create(owner=self.check, created=end_time, n=2, kind=None)
 
         self.client.login(username="alice@example.org", password="password")
         r = self.client.get(self.url)
@@ -133,7 +145,7 @@ class PingDetailsTestCase(BaseTestCase):
 
     def test_it_handles_missing_ping(self) -> None:
         self.client.login(username="alice@example.org", password="password")
-        r = self.client.get("/checks/%s/pings/123/" % self.check.code)
+        r = self.client.get(f"/checks/{self.check.code}/pings/123/")
         self.assertContains(r, "No additional information is", status_code=200)
 
     def test_it_shows_nonzero_exitstatus(self) -> None:

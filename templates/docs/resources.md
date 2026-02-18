@@ -10,6 +10,7 @@ Please submit additions and corrections
 * [crontask.sh](https://github.com/pforret/crontask) – Bash wrapper to use in crontab. Supports pinging.
 * [task-mon](https://github.com/dimo414/task-mon) – A small binary for notifying Healthchecks.io when a command runs, written in Rust.
 * [hc-monitor](https://gist.github.com/odolbeau/bd6d8eb7910d1289e2687682c8db9275) – Bash wrapper, supports pinging.
+* [pytocron](https://github.com/hartwork/pytocron) – Cron implementation in Python with built-in Healthchecks support.
 
 ## Tools for Self-Hosting
 
@@ -31,6 +32,7 @@ Please submit additions and corrections
 ### PowerShell
 
 * [davehope/HealthChecksIOStatusReport](https://github.com/davehope/HealthChecksIOStatusReport) – Supports pinging.
+* [ptmorris1/healthchecks-pwsh](https://github.com/ptmorris1/healthchecks-pwsh) – Supports pinging and all Management API calls.
 
 ### Python
 
@@ -57,3 +59,4 @@ Please submit additions and corrections
 
 * [healthchecks/dashboard](https://github.com/healthchecks/dashboard) – A standalone HTML page showing the status of the checks in your account.
 * [nicoandrade/healthchecks-front](https://github.com/nicoandrade/healthchecks-front) – Beautiful & free web dashboard, works great on desktop and mobile.
+* [KumaBar](https://apps.apple.com/ca/app/kumabar/id6746335356?mt=12) – MacOS menu bar app, supports Uptime Kuma and Healthchecks.io.

@@ -4,9 +4,7 @@ import json
 from functools import wraps
 from typing import Any, Callable
 
-from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
-
 from hc.accounts.models import Project
 from hc.lib.typealias import ViewFunc
 
@@ -46,8 +44,8 @@ def authorize(f: ViewFunc) -> ViewFunc:
         else:
             request.json = {}
 
-        if "HTTP_X_API_KEY" in request.META:
-            api_key = request.META["HTTP_X_API_KEY"]
+        if "X-Api-Key" in request.headers:
+            api_key = request.headers["X-Api-Key"]
         elif "api_key" in request.json:
             api_key = str(request.json["api_key"])
         else:
@@ -56,11 +54,11 @@ def authorize(f: ViewFunc) -> ViewFunc:
         if len(api_key) != 32:
             return error("missing api key", 401)
 
-        try:
-            request.project = Project.objects.get(api_key=api_key)
-        except Project.DoesNotExist:
+        project = Project.objects.for_api_key(api_key, accept_rw=True, accept_ro=False)
+        if project is None:
             return error("wrong api key", 401)
 
+        request.project = project
         request.readonly = False
         request.v = _get_api_version(request)
         return f(request, *args, **kwds)
@@ -71,22 +69,22 @@ def authorize(f: ViewFunc) -> ViewFunc:
 def authorize_read(f: ViewFunc) -> ViewFunc:
     @wraps(f)
     def wrapper(request: ApiRequest, *args: Any, **kwds: Any) -> HttpResponse:
-        if "HTTP_X_API_KEY" in request.META:
-            api_key = request.META["HTTP_X_API_KEY"]
+        if "X-Api-Key" in request.headers:
+            api_key = request.headers["X-Api-Key"]
         else:
             api_key = ""
 
         if len(api_key) != 32:
             return error("missing api key", 401)
 
-        write_key_match = Q(api_key=api_key)
-        read_key_match = Q(api_key_readonly=api_key)
-        try:
-            request.project = Project.objects.get(write_key_match | read_key_match)
-        except Project.DoesNotExist:
+        project = Project.objects.for_api_key(api_key, accept_rw=True, accept_ro=True)
+        if project is None:
             return error("wrong api key", 401)
 
-        request.readonly = api_key == request.project.api_key_readonly
+        request.project = project
+        request.readonly = (
+            api_key.startswith("hcr_") or api_key == request.project.api_key_readonly
+        )
         request.v = _get_api_version(request)
         return f(request, *args, **kwds)
 

@@ -36,6 +36,22 @@ termination.
 * Open [http://localhost:8000](http://localhost:8000) in your browser and log in with
   the credentials from the previous step.
 
+## Running `manage.py` Commands
+
+* `collectstatic`, `compress` – when running with Docker, you do
+  not need to manually run these. These are run while building the container image,
+  and their results are baked in the image (you can find them listed in the [Dockerfile](https://github.com/healthchecks/healthchecks/blob/master/docker/Dockerfile)).
+* `migrate`, `sendalerts`, `sendreports`, `smtpd` – when running with Docker, you
+  also do  not need to manually run these. They are run automatically on
+  container startup (you can find them listed in [uwsgi.ini](https://github.com/healthchecks/healthchecks/blob/master/docker/uwsgi.ini)).
+* `createsuperuser`, `pruneobjects`, `prunetokenbucket`, `pruneusers`,
+  `settelegramwebhook` – you need to run them **inside the container**, not on
+  the host system. Do it like so:
+
+  ```sh
+  docker compose run web /opt/healthchecks/manage.py <command>
+  ```
+
 ## uWSGI Configuration
 
 The reference Dockerfile uses [uWSGI](https://uwsgi-docs.readthedocs.io/en/latest/)
@@ -49,6 +65,17 @@ To adjust the number of uWSGI processes (for example, to save memory), set:
     UWSGI_PROCESSES=2
 
 Read more about configuring uWSGI in [uWSGI documentation](https://uwsgi-docs.readthedocs.io/en/latest/Configuration.html#environment-variables).
+
+## IPv6
+
+uWSGI is configured to listen on IPv4 only by default. To also listen on IPv6, set
+the LISTEN_IPV6 environment variable:
+
+    LISTEN_IPV6=1
+
+Unfortunately this cannot be enabled by default because on an IPv4-only system
+uWSGI would crash while trying to open an IPv6 socket
+(see [issue #1207](https://github.com/healthchecks/healthchecks/issues/1207)).
 
 ## SMTP Listener Configuration via `SMTPD_PORT`
 
@@ -148,3 +175,7 @@ replace the "build" section with:
 ```text
 image: healthchecks/healthchecks:vX.Y
 ```
+
+To upgrade to a newer Healthchecks version, edit `docker-compose.yml` and update the
+version number in the container image name (the "X.Y" part) and run
+`docker compose up`.

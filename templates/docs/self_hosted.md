@@ -8,12 +8,11 @@ Healthchecks instance yourself.
 
 The building blocks are:
 
-* Python 3.10+
-* Django 5.1
+* Python 3.12+
+* Django 6.0
 * PostgreSQL or MySQL
 
 ## Setting Up for Development
-
 
 You can set up a development environment in a Python
 [virtual environment](https://docs.python.org/3/tutorial/venv.html)
@@ -68,7 +67,6 @@ The following instructions assume you are using a Debian-based OS.
 
 * From another shell, run the `sendalerts` management command, responsible for
   sending out notifications:
-
         $ ./manage.py sendalerts
 
 At this point, the site should now be running at `http://localhost:8000`.
@@ -82,6 +80,12 @@ specific users, inspect contents of database tables.
 To access the administration panel, if you haven't already, create a superuser account:
 
     $ ./manage.py createsuperuser
+
+This will trigger an interactive prompt.
+
+You can also provide credentials via parameters, bypassing the interactive prompt:
+
+    $ ./manage.py createsuperuser --email user@example.com --password changeme123
 
 Then, log into the site using the superuser credentials. Once logged in,
 click on the "Account" dropdown in top navigation, and select "Site Administration".

@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from datetime import timedelta as td
-from datetime import timezone
 from unittest.mock import Mock, patch
 
+import time_machine
 from django.conf import settings
 from django.core import mail
-from django.core.mail import EmailMessage, EmailMultiAlternatives
 from django.test.utils import override_settings
 from django.utils.timezone import now
 
 from hc.api.management.commands.sendreports import Command
-from hc.api.models import Check
+from hc.api.models import Check, Flip
 from hc.test import BaseTestCase
 
 CURRENT_TIME = datetime(2020, 1, 13, 2, tzinfo=timezone.utc)
-MOCK_NOW = Mock(return_value=CURRENT_TIME)
 MOCK_SLEEP = Mock()
 
 
@@ -26,12 +24,12 @@ This is a hourly reminder sent by Mychecks.
 One check is currently DOWN:
 
 
-Alices Project
-==============
-
-Status Name                                     Last Ping
------- ---------------------------------------- ----------------------
-DOWN   Foo                                      now
+Project "Alices Project"
++--------+------+-----------+
+| Status | Name | Last Ping |
++========+======+===========+
+| DOWN   | Foo  | now       |
++--------+------+-----------+
 
 
 --
@@ -39,11 +37,17 @@ Cheers,
 Mychecks
 """
 
+EMPTY_TABLE = """
++--------+------+-----------+-----------+
+| Status | Name | Nov. 2019 | Dec. 2019 |
++========+======+===========+===========+
+| new    | Foo  |           |           |
++--------+------+-----------+-----------+
+""".strip()
+
 
 @override_settings(SITE_NAME="Mychecks")
-@patch("hc.lib.date.now", MOCK_NOW)
-@patch("hc.accounts.models.now", MOCK_NOW)
-@patch("hc.api.management.commands.sendreports.now", MOCK_NOW)
+@time_machine.travel(CURRENT_TIME)
 @patch("hc.api.management.commands.sendreports.time.sleep", MOCK_SLEEP)
 class SendReportsTestCase(BaseTestCase):
     def setUp(self) -> None:
@@ -65,15 +69,16 @@ class SendReportsTestCase(BaseTestCase):
 
         # And it needs at least one check that has been pinged.
         self.check = Check(project=self.project, last_ping=now())
+        self.check.created = datetime(2019, 10, 1, tzinfo=timezone.utc)
         self.check.name = "Foo"
         self.check.status = "down"
         self.check.save()
 
-    def get_html(self, email: EmailMessage) -> str:
-        assert isinstance(email, EmailMultiAlternatives)
-        html, _ = email.alternatives[0]
-        assert isinstance(html, str)
-        return html
+        self.flip = Flip(owner=self.check)
+        self.flip.created = datetime(2019, 12, 31, 23, tzinfo=timezone.utc)
+        self.flip.old_status = "new"
+        self.flip.new_status = "down"
+        self.flip.save()
 
     def test_it_sends_monthly_report(self) -> None:
         cmd = Command(stdout=Mock())
@@ -91,12 +96,49 @@ class SendReportsTestCase(BaseTestCase):
         self.assertIn("List-Unsubscribe-Post", email.extra_headers)
         self.assertNotIn("X-Bounce-ID", email.extra_headers)
         self.assertEqual(email.subject, "Monthly Report")
-        self.assertIn("This is a monthly report", email.body)
 
-        html = self.get_html(email)
-        self.assertIn("This is a monthly report", html)
-        self.assertIn("Nov. 2019", html)
-        self.assertIn("Dec. 2019", html)
+        # Note, assertEmailContains tests if the fragment appears in
+        # *both* text and HTML versions.
+        self.assertEmailContains("This is a monthly report")
+
+        # There were no downtimes in November 2019:
+        self.assertEmailContains("Nov. 2019")
+        self.assertEmailContains("All good!")
+
+        # There was one hour downtime in December 2019 (the last hour before midnight)
+        self.assertEmailContains("Dec. 2019")
+        self.assertEmailContains("1 h 0 min total")
+
+    def test_it_handles_no_data(self) -> None:
+        self.check.status = "new"
+        self.check.created = datetime(2020, 1, 5, tzinfo=timezone.utc)
+        self.check.save()
+
+        self.flip.delete()
+
+        cmd = Command(stdout=Mock())
+        found = cmd.handle_one_report()
+        self.assertTrue(found)
+
+        # The check did not exist in November 2019, so the email should not
+        # contain strings "All good!" or "total"
+        self.assertEmailNotContains("All good!")
+        self.assertEmailNotContains("total")
+
+        # Make sure the text version contains empty cells for months with no data
+        self.assertEmailContainsText(EMPTY_TABLE)
+
+    def test_text_report_does_not_escape(self) -> None:
+        self.project.name = "Alice & Friends"
+        self.project.save()
+
+        self.check.name = "Foo & Bar"
+        self.check.save()
+
+        cmd = Command(stdout=Mock())
+        cmd.handle_one_report()
+        self.assertEmailContainsText("Alice & Friends")
+        self.assertEmailContainsText("Foo & Bar")
 
     def test_it_sends_weekly_report(self) -> None:
         self.profile.reports = "weekly"
@@ -107,12 +149,9 @@ class SendReportsTestCase(BaseTestCase):
 
         email = mail.outbox[0]
         self.assertEqual(email.subject, "Weekly Report")
-        self.assertIn("This is a weekly report", email.body)
-
-        html = self.get_html(email)
-        self.assertIn("This is a weekly report", html)
-        self.assertIn("Dec 30 - Jan 5", html)
-        self.assertIn("Jan 6 - Jan 12", html)
+        self.assertEmailContains("This is a weekly report")
+        self.assertEmailContains("Dec 30 - Jan 5")
+        self.assertEmailContains("Jan 6 - Jan 12")
 
     def test_it_handles_positive_utc_offset(self) -> None:
         self.profile.reports = "weekly"
@@ -122,15 +161,13 @@ class SendReportsTestCase(BaseTestCase):
         cmd = Command(stdout=Mock())
         cmd.handle_one_report()
 
-        email = mail.outbox[0]
-        html = self.get_html(email)
         # UTC:      Monday, Jan 13, 2AM.
         # New York: Sunday, Jan 12, 9PM.
         # The report should not contain the Jan 6 - Jan 12 week, because
         # in New York it is the current week.
-        self.assertIn("Dec 23 - Dec 29", html)
-        self.assertIn("Dec 30 - Jan 5", html)
-        self.assertNotIn("Jan 6 - Jan 12", html)
+        self.assertEmailContains("Dec 23 - Dec 29")
+        self.assertEmailContains("Dec 30 - Jan 5")
+        self.assertEmailNotContains("Jan 6 - Jan 12")
 
     def test_it_handles_negative_utc_offset(self) -> None:
         self.profile.reports = "weekly"
@@ -140,13 +177,11 @@ class SendReportsTestCase(BaseTestCase):
         cmd = Command(stdout=Mock())
         cmd.handle_one_report()
 
-        email = mail.outbox[0]
-        html = self.get_html(email)
         # UTC:   Monday, Jan 13, 2AM.
         # Tokyo: Monday, Jan 13, 11AM
-        self.assertNotIn("Dec 23 - Dec 29", html)
-        self.assertIn("Dec 30 - Jan 5", html)
-        self.assertIn("Jan 6 - Jan 12", html)
+        self.assertEmailNotContains("Dec 23 - Dec 29")
+        self.assertEmailContains("Dec 30 - Jan 5")
+        self.assertEmailContains("Jan 6 - Jan 12")
 
     def test_it_obeys_next_report_date(self) -> None:
         self.profile.next_report_date = CURRENT_TIME + td(days=1)
@@ -207,10 +242,7 @@ class SendReportsTestCase(BaseTestCase):
         self.assertEqual(len(mail.outbox), 1)
 
         email = mail.outbox[0]
-        html = self.get_html(email)
-        self.assertNotIn(str(self.check.code), email.body)
-        self.assertNotIn(str(self.check.code), html)
-
+        self.assertEmailNotContains(str(self.check.code))
         self.assertEqual(email.body, NAG_TEXT)
 
     def test_it_obeys_next_nag_date(self) -> None:
@@ -253,13 +285,8 @@ class SendReportsTestCase(BaseTestCase):
         found = cmd.handle_one_nag()
         self.assertTrue(found)
 
-        email = mail.outbox[0]
-        self.assertIn("Foo", email.body)
-        self.assertNotIn("Foobar", email.body)
-
-        html = self.get_html(email)
-        self.assertIn("Foo", html)
-        self.assertNotIn("Foobar", html)
+        self.assertEmailContains("Foo")
+        self.assertEmailNotContains("Foobar")
 
     @override_settings(EMAIL_MAIL_FROM_TMPL="%s@bounces.example.org")
     def test_it_sets_custom_mail_from(self) -> None:

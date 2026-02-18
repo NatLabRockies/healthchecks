@@ -3,10 +3,10 @@ from __future__ import annotations
 import email.policy
 import time
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 from datetime import timedelta as td
-from datetime import timezone
 from email import message_from_bytes
+from ipaddress import ip_address
 from typing import Any, Literal
 from uuid import UUID
 
@@ -37,10 +37,10 @@ from pydantic_core import PydanticCustomError
 from hc.accounts.models import Profile, Project
 from hc.api.decorators import ApiRequest, authorize, authorize_read, cors
 from hc.api.forms import FlipsFiltersForm
-from hc.api.models import MAX_DURATION, Channel, Check, Flip, Notification, Ping
+from hc.api.models import Channel, Check, Flip, Notification, Ping, prepare_durations
 from hc.lib.badges import check_signature, get_badge_svg, get_badge_url
 from hc.lib.signing import unsign_bounce_id
-from hc.lib.string import is_valid_uuid_string
+from hc.lib.string import is_valid_uuid_string, match_keywords
 from hc.lib.tz import all_timezones, legacy_timezones
 
 
@@ -61,8 +61,10 @@ class Spec(BaseModel):
     channels: str | None = None
     desc: str | None = None
     failure_kw: str | None = Field(None, max_length=200)
-    filter_body: bool | None = None
     filter_subject: bool | None = None
+    filter_body: bool | None = None
+    filter_http_body: bool | None = None
+    filter_default_fail: bool | None = None
     grace: td | None = Field(None, ge=60, le=31536000)
     manual_resume: bool | None = None
     methods: Literal["", "POST"] | None = None
@@ -165,6 +167,14 @@ def format_first_error(exc: ValidationError) -> str:
     return "json validation error: " + tmpl % subject
 
 
+def valid_ip(ip: str) -> bool:
+    try:
+        ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+
 @csrf_exempt
 @never_cache
 def ping(
@@ -186,10 +196,13 @@ def ping(
     headers = request.META
     remote_addr = headers.get("HTTP_X_FORWARDED_FOR", headers["REMOTE_ADDR"])
     remote_addr = remote_addr.split(",")[0]
-    if "." in remote_addr and ":" in remote_addr:
-        # If remote_addr is in a ipv4address:port format (like in Azure App Service),
-        # remove the port:
-        remote_addr = remote_addr.split(":")[0]
+
+    # If remote_addr does not validate but appears to be in ipv4:port form
+    # (like Azure App Service reports), then remove the port
+    if not valid_ip(remote_addr):
+        parts = remote_addr.split(".")
+        if len(parts) == 4 and ":" in parts[-1]:
+            remote_addr = remote_addr.split(":")[0]
 
     scheme = headers.get("HTTP_X_FORWARDED_PROTO", "http")
     method = headers["REQUEST_METHOD"]
@@ -201,6 +214,19 @@ def ping(
 
     if check.methods == "POST" and method != "POST":
         action = "ign"
+
+    if action != "ign" and check.filter_http_body:
+        body_text = body.decode()
+        if check.failure_kw and match_keywords(body_text, check.failure_kw):
+            action = "fail"
+        elif check.success_kw and match_keywords(body_text, check.success_kw):
+            action = "success"
+        elif check.start_kw and match_keywords(body_text, check.start_kw):
+            action = "start"
+        elif check.filter_default_fail:
+            action = "fail"
+        else:
+            action = "ign"
 
     rid, rid_str = None, request.GET.get("rid")
     if rid_str is not None:
@@ -298,9 +324,9 @@ def _update(check: Check, spec: Spec, v: int) -> None:
 
             matches = [c for c in available if str(c.code) == s or c.name == s]
             if len(matches) == 0:
-                raise BadChannelException("invalid channel identifier: %s" % s)
+                raise BadChannelException(f"invalid channel identifier: {s}")
             elif len(matches) > 1:
-                raise BadChannelException("non-unique channel identifier: %s" % s)
+                raise BadChannelException(f"non-unique channel identifier: {s}")
 
             new_channels.add(matches[0])
 
@@ -353,6 +379,8 @@ def _update(check: Check, spec: Spec, v: int) -> None:
         "failure_kw",
         "filter_subject",
         "filter_body",
+        "filter_http_body",
+        "filter_default_fail",
         "grace",
     ):
         v = getattr(spec, key)
@@ -520,6 +548,10 @@ def pause(request: ApiRequest, code: UUID) -> HttpResponse:
     if check.project_id != request.project.id:
         return HttpResponseForbidden()
 
+    # Return early, without creating a flip object, if the check is already paused
+    if check.status == "paused":
+        return JsonResponse(check.to_dict(v=request.v))
+
     # Track the status change for correct downtime calculation in Check.downtimes()
     check.create_flip("paused", mark_as_processed=True)
 
@@ -569,37 +601,18 @@ def pings(request: ApiRequest, code: UUID) -> HttpResponse:
     # There might be more pings in the database (depends on how pruning is handled)
     # but we will not return more than the limit allows.
     profile = Profile.objects.get(user__project=request.project)
-    limit = profile.ping_log_limit
+    # Cap the number of returned pings to 1000.
+    limit = min(profile.ping_log_limit, 1000)
 
     # Query in descending order so we're sure to get the most recent
     # pings, regardless of the limit restriction
     pings = list(Ping.objects.filter(owner=check).order_by("-id")[:limit])
+    prepare_durations(pings)
 
-    starts: dict[UUID | None, datetime | None] = {}
-    num_misses = 0
-    for ping in reversed(pings):
-        if ping.kind == "start":
-            starts[ping.rid] = ping.created
-        elif ping.kind in (None, "", "fail"):
-            if ping.rid not in starts:
-                # We haven't seen a start, success or fail event for this rid.
-                # Will need to fall back to Ping.duration().
-                num_misses += 1
-            else:
-                ping.duration = None
-                start = starts[ping.rid]
-                if start and (ping.created - start) < MAX_DURATION:
-                    ping.duration = ping.created - start
-
-            starts[ping.rid] = None
-
-    # If we will need to fall back to Ping.duration() more than 10 times
-    # then disable duration display altogether:
-    if num_misses > 10:
-        for ping in pings:
-            ping.duration = None
-
-    return JsonResponse({"pings": [p.to_dict() for p in pings]})
+    # Pass check's code to Ping.to_dict(), so it does not need to look it up
+    # (which would result in a database query)
+    ping_dicts = [p.to_dict(owner_code=check.code, v=request.v) for p in pings]
+    return JsonResponse({"pings": ping_dicts})
 
 
 @cors("GET")
@@ -838,7 +851,7 @@ def metrics(request: HttpRequest) -> HttpResponse:
     if not settings.METRICS_KEY:
         return HttpResponseForbidden()
 
-    key = request.META.get("HTTP_X_METRICS_KEY")
+    key = request.headers.get("X-Metrics-Key")
     if key != settings.METRICS_KEY:
         return HttpResponseForbidden()
 

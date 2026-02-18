@@ -223,6 +223,7 @@ pre {
     text-align: center;
     font-size: small;
     padding: 2px 0;
+    line-height: 2;
 }
 
 #account-warning {
@@ -397,3 +398,4 @@ input[type="number"]::-webkit-inner-spin-button {
 select.form-control {
     background-color: var(--panel-bg);
 }
+

@@ -64,9 +64,20 @@ $(function () {
         return false;
     });
 
+    var profileTz = $("#checks-table").data("profile-tz");
+    var dateFormatter = new DateFormatter(profileTz);
     $(".last-ping").tooltip({
-        selector: ".label-confirmation",
-        title: 'The word "confirm" was found in request body',
+        delay: 200,
+        title: function () {
+            if (this.querySelector(".label-confirmation")) {
+                return 'The word "confirm" was found in request body';
+            }
+            var dtSpan = this.querySelector("[data-dt]");
+            if (dtSpan) {
+                var dt = new Date(dtSpan.dataset.dt * 1000);
+                return dateFormatter.formatTimestamp(dt);
+            }
+        },
     });
 
     $("#my-checks-tags .btn").tooltip({
@@ -194,21 +205,30 @@ $(function () {
     $("#to-uuid").click((e) => switchUrlFormat("uuid"));
     $("#to-slug").click((e) => switchUrlFormat("slug"));
 
-    $(".show-log").click(function (e) {
-        var code = $(this).closest("tr.checks-row").attr("id");
-        var url = base + "/checks/" + code + "/details/";
-        window.location = url;
-        return false;
-    });
-
     $(".pause").tooltip({
-        title: "Pause this check?<br />Click again to confirm.",
+        title: function() {
+            var code = $(this).closest("tr.checks-row").attr("id");
+            var alreadyPaused = $("#" + code + " span.status").hasClass("ic-paused");
+            if (alreadyPaused) {
+                return "This check is already paused.";
+            }
+
+            return "Pause this check?<br />Click again to confirm.";
+        },
         trigger: "manual",
         html: true,
     });
 
     $(".pause").click(function () {
         var btn = $(this);
+        var code = btn.closest("tr.checks-row").attr("id");
+
+        // A click on an already paused check
+        var alreadyPaused = $("#" + code + " span.status").hasClass("ic-paused");
+        if (alreadyPaused) {
+            btn.tooltip("show");
+            return false;
+        }
 
         // First click: show a confirmation tooltip
         if (!btn.hasClass("confirm")) {
@@ -218,7 +238,6 @@ $(function () {
 
         // Second click: update UI and pause the check
         btn.removeClass("confirm").tooltip("hide");
-        var code = btn.closest("tr.checks-row").attr("id");
         $("#" + code + " span.status").attr("class", "status ic-paused");
 
         var url = base + "/checks/" + code + "/pause/";
@@ -244,7 +263,7 @@ $(function () {
             if (cssClasses.indexOf("ic-new") > -1)
                 return "New. Has never received a ping.";
             if (cssClasses.indexOf("ic-paused") > -1)
-                return "Monitoring paused. Ping to resume.";
+                return "Monitoring paused.<br />Ping to resume.";
 
             if (cssClasses.indexOf("sort-name") > -1)
                 return "Sort by name<br />(but failed always first)";
