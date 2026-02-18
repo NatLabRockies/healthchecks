@@ -5,7 +5,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY requirements.txt /tmp
 RUN \
     apt-get update && \
-    apt-get install -y build-essential curl libpq-dev libmariadb-dev libffi-dev libpcre2-dev libssl-dev libcurl4-openssl-dev libpython3-dev pkg-config
+    apt-get install -y build-essential curl libpq-dev libmariadb-dev libffi-dev libpcre2-dev libssl-dev libcurl4-openssl-dev libpython3-dev pkg-config libsasl2-dev libldap2-dev
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- --profile minimal -y
 ENV PATH=$PATH:/root/.cargo/bin
 RUN pip wheel --wheel-dir /wheels apprise uwsgi mysqlclient minio==7.2.20 "psycopg[c]" -r /tmp/requirements.txt
@@ -23,7 +23,7 @@ WORKDIR /opt/healthchecks
 
 RUN \
     apt-get update && \
-    apt-get install -y libcurl4t64 libexpat1 libpq5 libmariadb3 libxml2 && \
+    apt-get install -y libcurl4t64 libexpat1 libpq5 libmariadb3 libxml2 ca-certificates && \
     rm -rf /var/apt/cache && \
     rm -rf /var/lib/apt/lists
 
